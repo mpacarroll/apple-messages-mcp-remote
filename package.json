@@ -1,10 +1,10 @@
 {
-  "name": "@griches/apple-messages-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for interacting with Apple Messages on macOS",
+  "name": "apple-messages-mcp-remote",
+  "version": "0.1.0",
+  "description": "MCP server for interacting with Apple Messages on macOS, with an optional remote HTTP transport for always-on Macs. Fork of @griches/apple-messages-mcp.",
   "main": "build/index.js",
   "bin": {
-    "apple-messages-mcp": "build/index.js"
+    "apple-messages-mcp-remote": "build/index.js"
   },
   "files": [
     "build/**/*.js",
@@ -14,6 +14,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node build/index.js",
+    "start:remote": "MCP_TRANSPORT=http node build/index.js",
     "test": "bun test tests/applescript.test.ts && node --experimental-strip-types --no-warnings --test tests/database.test.ts",
     "test:clean": "bun test --bail tests/applescript.test.ts && node --experimental-strip-types --no-warnings --test tests/database.test.ts",
     "prepublishOnly": "npm run build"
@@ -30,15 +31,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/griches/apple-mcp.git",
-    "directory": "messages"
+    "url": "https://github.com/mpacarroll/apple-messages-mcp-remote.git"
   },
-  "homepage": "https://github.com/griches/apple-mcp/tree/main/messages",
+  "homepage": "https://github.com/mpacarroll/apple-messages-mcp-remote",
   "engines": {
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.24.4"
   },
   "devDependencies": {

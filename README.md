@@ -1,250 +1,26 @@
-# Apple MCP Servers
+# apple-messages-mcp-remote
 
-A collection of [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers that provide AI assistants with access to native Apple applications on macOS.
+A fork of [@griches/apple-messages-mcp](https://github.com/griches/apple-mcp/tree/main/messages) that adds an optional remote (HTTP) transport, for running this server on an always-on Mac and reaching it from a cloud AI session instead of only a session running locally on the same machine. Local stdio mode is unchanged and remains the default — this is purely additive.
 
-## Servers
+An [MCP](https://modelcontextprotocol.io) server that gives AI assistants access to Apple Messages on macOS. Reads messages from the Messages database (SQLite) and sends messages via AppleScript.
 
-| Server | NPM Package | Description |
-|--------|-------------|-------------|
-| [Apple Notes](#apple-notes) | [![npm](https://img.shields.io/npm/v/@griches/apple-notes-mcp)](https://www.npmjs.com/package/@griches/apple-notes-mcp) | Read, create, update, move, and delete notes and folders |
-| [Apple Messages](#apple-messages) | [![npm](https://img.shields.io/npm/v/@griches/apple-messages-mcp)](https://www.npmjs.com/package/@griches/apple-messages-mcp) | Read message history, search conversations, and send messages |
-| [Apple Contacts](#apple-contacts) | [![npm](https://img.shields.io/npm/v/@griches/apple-contacts-mcp)](https://www.npmjs.com/package/@griches/apple-contacts-mcp) | Manage contacts, groups, and contact details |
-| [Apple Mail](#apple-mail) | [![npm](https://img.shields.io/npm/v/@griches/apple-mail-mcp)](https://www.npmjs.com/package/@griches/apple-mail-mcp) | Read, send, search, flag, and manage email |
-| [Apple Reminders](#apple-reminders) | [![npm](https://img.shields.io/npm/v/@griches/apple-reminders-mcp)](https://www.npmjs.com/package/@griches/apple-reminders-mcp) | Create, update, complete, and manage reminders and lists |
-| [Apple Calendar](#apple-calendar) | [![npm](https://img.shields.io/npm/v/@griches/apple-calendar-mcp)](https://www.npmjs.com/package/@griches/apple-calendar-mcp) | Create, update, and manage calendar events |
-| [Apple Maps](#apple-maps) | [![npm](https://img.shields.io/npm/v/@griches/apple-maps-mcp)](https://www.npmjs.com/package/@griches/apple-maps-mcp) | Search locations, get directions, and drop pins (visual only — limited by Apple's automation support) |
-
-## Requirements
-
-- **macOS 13+**
-- **Node.js** 18+ (22+ for Apple Messages)
-- **Full Disk Access** granted to your terminal app (System Settings > Privacy & Security > Full Disk Access) — required for reading the Messages database
-- **The associated Apple app must be running** for AppleScript-based servers (Notes, Contacts, Mail, Messages, Maps) — these communicate via AppleScript so the app needs to be open. Calendar and Reminders use EventKit directly and do not require the app to be open.
-
-## Safety Modes
-
-All servers (except Apple Maps, which is UI-only) support two optional safety flags:
-
-| Mode | Flag | Behaviour |
-|------|------|-----------|
-| **Normal** (default) | _(none)_ | All tools available, no restrictions |
-| **Read-only** | `--read-only` | Destructive/write tools are not registered at all |
-| **Confirm** | `--confirm-destructive` | Destructive tools require a `confirm: true` parameter; without it they return a warning asking the AI to check with the user first |
-
-### Claude Desktop
-
-```json
-{
-  "mcpServers": {
-    "apple-notes": {
-      "command": "npx",
-      "args": ["@griches/apple-notes-mcp", "--read-only"]
-    },
-    "apple-messages": {
-      "command": "npx",
-      "args": ["@griches/apple-messages-mcp", "--confirm-destructive"]
-    }
-  }
-}
-```
-
-### Claude Code
+## Quick Start (local, stdio — same as upstream)
 
 ```bash
-claude mcp add apple-notes -- npx @griches/apple-notes-mcp --read-only
-claude mcp add apple-messages -- npx @griches/apple-messages-mcp --confirm-destructive
+npx apple-messages-mcp-remote
 ```
 
-### Destructive tools by server
+## Quick Start (remote, HTTP)
 
-| Server | Destructive tools |
-|--------|-------------------|
-| Notes | `delete_note`, `delete_folder` |
-| Contacts | `delete_contact`, `delete_group` |
-| Reminders | `delete_reminder`, `delete_list` |
-| Calendar | `delete_event` |
-
-## Installation
-
-All servers are published on [npm](https://www.npmjs.com/search?q=%40griches%2Fapple) under the `@griches` scope. No cloning or building required — install and run directly with `npx`:
+Only do this if you understand what you're exposing: this gives whoever holds the token read access to your real iMessage history, and send access to your Messages app. See [Remote setup](#remote-setup) below before running this on a machine reachable from outside your own network.
 
 ```bash
-# Apple Notes
-npx @griches/apple-notes-mcp
-
-# Apple Messages
-npx @griches/apple-messages-mcp
-
-# Apple Contacts
-npx @griches/apple-contacts-mcp
-
-# Apple Reminders
-npx @griches/apple-reminders-mcp
-
-# Apple Calendar
-npx @griches/apple-calendar-mcp
-
-# Apple Maps
-npx @griches/apple-maps-mcp
-
-# Apple Mail
-npx @griches/apple-mail-mcp
+export MCP_TRANSPORT=http
+export MCP_AUTH_TOKEN=$(openssl rand -hex 32)   # save this, you'll need it on the client side
+npx apple-messages-mcp-remote
 ```
 
-### Claude Code
-
-```bash
-claude mcp add apple-notes -- npx @griches/apple-notes-mcp
-claude mcp add apple-messages -- npx @griches/apple-messages-mcp
-claude mcp add apple-contacts -- npx @griches/apple-contacts-mcp
-claude mcp add apple-reminders -- npx @griches/apple-reminders-mcp
-claude mcp add apple-calendar -- npx @griches/apple-calendar-mcp
-claude mcp add apple-maps -- npx @griches/apple-maps-mcp
-claude mcp add apple-mail -- npx @griches/apple-mail-mcp
-```
-
-### Claude Desktop
-
-Add to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "apple-notes": {
-      "command": "npx",
-      "args": ["@griches/apple-notes-mcp"]
-    },
-    "apple-messages": {
-      "command": "npx",
-      "args": ["@griches/apple-messages-mcp"]
-    },
-    "apple-contacts": {
-      "command": "npx",
-      "args": ["@griches/apple-contacts-mcp"]
-    },
-    "apple-reminders": {
-      "command": "npx",
-      "args": ["@griches/apple-reminders-mcp"]
-    },
-    "apple-calendar": {
-      "command": "npx",
-      "args": ["@griches/apple-calendar-mcp"]
-    },
-    "apple-maps": {
-      "command": "npx",
-      "args": ["@griches/apple-maps-mcp"]
-    },
-    "apple-mail": {
-      "command": "npx",
-      "args": ["@griches/apple-mail-mcp"]
-    }
-  }
-}
-```
-
-## Install from Source
-
-If you prefer to build from source:
-
-```bash
-git clone https://github.com/griches/apple-mcp.git
-cd apple-mcp
-
-# Apple Notes
-cd notes && npm install && npm run build
-
-# Apple Messages
-cd ../messages && npm install && npm run build
-
-# Apple Contacts
-cd ../contacts && npm install && npm run build
-
-# Apple Reminders
-cd ../reminders && npm install && npm run build
-
-# Apple Calendar
-cd ../calendar && npm install && npm run build
-
-# Apple Maps
-cd ../maps && npm install && npm run build
-
-# Apple Mail
-cd ../mail && npm install && npm run build
-```
-
-Then configure your MCP client to run the built files directly:
-
-```json
-{
-  "mcpServers": {
-    "apple-notes": {
-      "command": "node",
-      "args": ["/absolute/path/to/notes/build/index.js"]
-    },
-    "apple-messages": {
-      "command": "node",
-      "args": ["/absolute/path/to/messages/build/index.js"]
-    },
-    "apple-contacts": {
-      "command": "node",
-      "args": ["/absolute/path/to/contacts/build/index.js"]
-    },
-    "apple-reminders": {
-      "command": "node",
-      "args": ["/absolute/path/to/reminders/build/index.js"]
-    },
-    "apple-calendar": {
-      "command": "node",
-      "args": ["/absolute/path/to/calendar/build/index.js"]
-    },
-    "apple-maps": {
-      "command": "node",
-      "args": ["/absolute/path/to/maps/build/index.js"]
-    },
-    "apple-mail": {
-      "command": "node",
-      "args": ["/absolute/path/to/mail/build/index.js"]
-    }
-  }
-}
-```
-
----
-
-## Apple Notes
-
-An MCP server that interacts with Apple Notes via AppleScript.
-
-### Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_folders` | List all folders in Apple Notes |
-| `create_folder` | Create a new folder |
-| `list_notes` | List all notes in a folder |
-| `get_note` | Get the full content of a note by title |
-| `create_note` | Create a new note (HTML body) in a folder |
-| `update_note` | Update the body of an existing note |
-| `move_note` | Move a note from one folder to another |
-| `append_to_note` | Append HTML content to an existing note |
-| `delete_note` | Delete a note |
-| `delete_folder` | Delete a folder and all its notes |
-| `search_notes` | Search notes by keyword in titles and body content |
-
-### Usage Examples
-
-- "List my Apple Notes folders"
-- "Get my Shopping note"
-- "Create a note called Meeting Notes in my Work folder"
-- "Search my notes for recipes"
-
----
-
-## Apple Messages
-
-An MCP server that reads messages from the macOS Messages database (SQLite) and sends messages via AppleScript.
-
-### Tools
+## Tools
 
 | Tool | Description |
 |------|-------------|
@@ -254,178 +30,78 @@ An MCP server that reads messages from the macOS Messages database (SQLite) and 
 | `send_message` | Send an iMessage or SMS |
 | `get_chat_participants` | Get participants of a chat |
 
-### Permissions
+## Configuration
+
+### Claude Code
+
+```bash
+claude mcp add apple-messages -- npx apple-messages-mcp-remote
+```
+
+### Claude Desktop
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "apple-messages": {
+      "command": "npx",
+      "args": ["apple-messages-mcp-remote"]
+    }
+  }
+}
+```
+
+## Remote setup
+
+This adds an HTTP transport (Streamable HTTP, the current MCP spec's remote transport) alongside the original stdio one. Stdio is still the default — you only get the HTTP server if you set `MCP_TRANSPORT=http`.
+
+**Threat model this was actually designed for:** one person, one Mac, one client at a time, connecting from that same person's own cloud AI session. It is *not* designed to be a multi-tenant hosted service — every deployment only ever has one real Messages database behind it, so there's no "different users, different permissions" problem to solve, which is why this uses a single bearer token instead of OAuth. If you want to offer this to other people against their own Macs, each of them runs their own instance with their own token; you're not meant to run one instance for many people.
+
+**Environment variables:**
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `MCP_TRANSPORT` | no (default `stdio`) | Set to `http` to enable the remote server. |
+| `MCP_AUTH_TOKEN` | yes, in `http` mode | Bearer token every request must present. Generate with `openssl rand -hex 32`. Must be at least 32 characters — the server refuses to start otherwise. Never commit this. |
+| `MCP_PORT` | no (default `8443`) | Port to listen on. |
+| `MCP_HOST` | no (default `127.0.0.1`) | Bind address. Leave this on loopback and reach it through a tunnel (see below) rather than binding `0.0.0.0` and exposing a raw port. |
+
+**Do not expose a raw open port on the public internet.** Put a private tunnel in front of this instead — [Tailscale](https://tailscale.com) or a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) both work well and mean the port is never directly internet-routable, the bearer token is a second layer rather than your only layer, and you get to revoke access by removing a device/tunnel rather than by hoping nobody guessed the token.
+
+**Connecting a client**, once the tunnel is up:
+
+```json
+{
+  "mcpServers": {
+    "apple-messages-remote": {
+      "url": "https://your-tunnel-hostname/",
+      "headers": {
+        "Authorization": "Bearer <your MCP_AUTH_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+**What this does *not* do:** encrypt anything beyond what your tunnel provides, rate-limit requests, expire or rotate the token automatically, or provide per-tool permission scoping (a valid token can call every tool, including `send_message`). If any of that matters for your setup, treat this as a starting point, not a finished security product — patches welcome.
+
+## Requirements
+
+- **macOS** (uses AppleScript and macOS Messages database)
+- **Node.js** 22+ (uses built-in `node:sqlite`)
+- **Full Disk Access** granted to your terminal app (System Settings > Privacy & Security > Full Disk Access) — required for reading the Messages database
+
+## Permissions
 
 - **Reading messages**: Requires Full Disk Access for your terminal app to read `~/Library/Messages/chat.db`
 - **Sending messages**: macOS will prompt you to allow your terminal app to control the Messages app via AppleScript
 
-### Usage Examples
+## Credit
 
-- "Show my recent messages"
-- "Search my messages for flight confirmation"
-- "Send a message to +1234567890 saying I'm on my way"
-
----
-
-## Apple Contacts
-
-An MCP server that interacts with Apple Contacts via AppleScript.
-
-### Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_groups` | List all groups in Apple Contacts |
-| `list_contacts` | List all contacts, optionally filtered by group |
-| `get_contact` | Get full details of a contact (emails, phones, addresses, etc.) |
-| `search_contacts` | Search contacts by name |
-| `create_contact` | Create a new contact with optional email, phone, organization |
-| `update_contact` | Update an existing contact's details |
-| `delete_contact` | Delete a contact by name |
-| `create_group` | Create a new group |
-| `delete_group` | Delete a contact group |
-| `add_contact_to_group` | Add a contact to a group |
-| `remove_contact_from_group` | Remove a contact from a group |
-
-### Usage Examples
-
-- "List all my contacts"
-- "Find contacts named John"
-- "Get details for Jane Smith"
-- "Create a contact for Bob Jones at Acme Corp"
-
----
-
-## Apple Reminders
-
-An MCP server that interacts with Apple Reminders via EventKit — fast, reliable, and no dependency on the Reminders app being open.
-
-### Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_lists` | List all reminder lists |
-| `create_list` | Create a new reminder list |
-| `list_reminders` | List reminders with a due date in a list (optionally include completed) |
-| `get_reminder` | Get full details of a reminder by name or id |
-| `create_reminder` | Create a new reminder with optional due date, notes, and priority |
-| `update_reminder` | Update an existing reminder's details (by name or id) |
-| `complete_reminder` | Mark a reminder as completed (by name or id) |
-| `uncomplete_reminder` | Mark a completed reminder as incomplete (by name or id) |
-| `delete_reminder` | Delete a reminder (by name or id) |
-| `delete_list` | Delete a reminder list and all its reminders |
-| `search_reminders` | Search reminders by name across lists |
-
-### Usage Examples
-
-- "Show my reminder lists"
-- "List reminders in my Shopping list"
-- "Create a reminder to buy milk in my Groceries list"
-- "Mark the dentist appointment reminder as done"
-
----
-
-## Apple Calendar
-
-An MCP server that interacts with Apple Calendar via EventKit — fast, reliable, and no dependency on the Calendar app being open for reads. Write operations (create, update, delete) use AppleScript.
-
-### Permissions
-
-- **Calendar access**: macOS will prompt you to grant calendar access the first time the server runs (System Settings > Privacy & Security > Calendars)
-- **Creating/updating/deleting events**: macOS will prompt you to allow your terminal app to control the Calendar app via AppleScript
-
-### Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_calendars` | List all calendars |
-| `list_all_events` | List events across all calendars within a date range |
-| `list_events` | List events in a specific calendar within a date range |
-| `get_event` | Get full details of an event by summary/title, including alerts |
-| `create_event` | Create a new event with date, time, location, description, and optional alerts |
-| `update_event` | Update an existing event's details, including alerts |
-| `delete_event` | Delete an event by summary/title |
-| `search_events` | Search events by summary/title across calendars |
-
-### Usage Examples
-
-- "List my calendars"
-- "Show events in my Work calendar for next week"
-- "Create a meeting tomorrow at 2pm in my Work calendar"
-- "Create a dentist appointment on Friday at 10am with an alert 2 hours before"
-- "Add a 30-minute alert to my Team Standup event"
-- "Search for events about standup"
-
----
-
-## Apple Maps
-
-An MCP server that interacts with Apple Maps using Maps URL schemes.
-
-> **Note:** Apple Maps has a very limited AppleScript/automation dictionary compared to other Apple apps. There is no supported way to programmatically read back search results, route details, or location data from Maps. As a result, these tools open Apple Maps with the requested query but cannot return structured data (e.g. addresses, coordinates, distances) to the agent. The results are visual — you'll see them in the Maps app.
-
-### Tools
-
-| Tool | Description |
-|------|-------------|
-| `search_location` | Search for a location in Apple Maps |
-| `get_directions` | Get directions between two locations (driving, walking, or transit) |
-| `drop_pin` | Drop a pin at specific coordinates |
-| `open_address` | Open a specific address in Apple Maps |
-| `save_to_favorites` | Open a location in Maps so you can save it as a favorite |
-
-### Usage Examples
-
-- "Search for coffee shops near Times Square"
-- "Get walking directions from Central Park to the Met"
-- "Show me 1 Apple Park Way, Cupertino on a map"
-- "Drop a pin at 48.8584, 2.2945"
-
----
-
-## Apple Mail
-
-An MCP server that interacts with Apple Mail via AppleScript.
-
-### Tools
-
-| Tool | Description |
-|------|-------------|
-| `list_mailboxes` | List all mailboxes across accounts with unread counts |
-| `list_messages` | List recent messages in a mailbox, optionally filtered to unread only |
-| `get_message` | Get the full content of an email by ID |
-| `search_messages` | Search emails by subject or sender across mailboxes |
-| `send_email` | Send an email with optional CC/BCC (supports multiple recipients) |
-| `get_unread_count` | Get unread count for a mailbox or all mailboxes |
-| `move_message` | Move an email to a different mailbox |
-| `mark_read` | Mark an email as read or unread |
-| `delete_message` | Delete an email (moves to trash) |
-| `flag_message` | Flag or unflag an email message |
-
-### Usage Examples
-
-- "How many unread emails do I have?"
-- "Show my recent emails in INBOX"
-- "Show my unread emails in INBOX"
-- "Search my email for invoices"
-- "Send an email to bob@example.com about the meeting"
-
----
-
-## Development
-
-Each server is a standalone TypeScript project in its own directory.
-
-```bash
-# Run tests for Notes
-cd notes
-npm test
-
-# Run tests for Messages
-cd messages
-npm test
-```
+The stdio server, database reader, and AppleScript send logic are almost entirely the original work of [@griches/apple-messages-mcp](https://github.com/griches/apple-mcp/tree/main/messages) — this fork's own contribution is the remote HTTP transport and the auth/tunnel setup around it.
 
 ## License
 
-MIT
+MIT.

@@ -1,0 +1,115 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import * as applescript from "./applescript.js";
+import * as database from "./database.js";
+
+/**
+ * Builds a fresh McpServer instance with every tool registered.
+ * Shared by both the stdio entrypoint and the remote HTTP entrypoint so
+ * the tool surface can never drift between the two transports.
+ */
+export function createServer(): McpServer {
+  const server = new McpServer({
+    name: "apple-messages",
+    version: "1.0.0",
+  });
+
+  server.registerTool(
+    "list_chats",
+    {
+      description: "List recent chats with last message preview and participant info",
+      inputSchema: z.object({
+        limit: z.number().optional().describe("Maximum number of chats to return (default 50)"),
+      }),
+    },
+    async ({ limit }) => {
+      try {
+        const chats = database.listChats(limit);
+        return { content: [{ type: "text", text: JSON.stringify(chats, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${(err as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_chat_messages",
+    {
+      description: "Get message history for a specific chat",
+      inputSchema: z.object({
+        chat_id: z.string().describe("Chat identifier (e.g. iMessage;-;+1234567890)"),
+        limit: z.number().optional().describe("Maximum number of messages to return (default 100)"),
+        from_date: z.string().optional().describe("Filter messages from this date (e.g. '2025-01-01' or '2025-03-15T14:00:00')"),
+        to_date: z.string().optional().describe("Filter messages up to this date (e.g. '2025-12-31')"),
+      }),
+    },
+    async ({ chat_id, limit, from_date, to_date }) => {
+      try {
+        const messages = database.getChatMessages(chat_id, limit, from_date, to_date);
+        return { content: [{ type: "text", text: JSON.stringify(messages, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${(err as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "search_messages",
+    {
+      description: "Search messages by text content",
+      inputSchema: z.object({
+        query: z.string().describe("Text to search for in messages"),
+        chat_id: z.string().optional().describe("Limit search to a specific chat"),
+        limit: z.number().optional().describe("Maximum number of results (default 50)"),
+      }),
+    },
+    async ({ query, chat_id, limit }) => {
+      try {
+        const results = database.searchMessages(query, chat_id, limit);
+        return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${(err as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "send_message",
+    {
+      description: "Send an iMessage or SMS to a phone number or email address",
+      inputSchema: z.object({
+        to: z.string().describe("Phone number or email address of the recipient"),
+        text: z.string().describe("Message text to send"),
+        service: z.enum(["iMessage", "SMS"]).optional().describe("Service to use (default iMessage)"),
+      }),
+    },
+    async ({ to, text, service }) => {
+      try {
+        const result = await applescript.sendMessage(to, text, service);
+        return { content: [{ type: "text", text: result }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${(err as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_chat_participants",
+    {
+      description: "Get participants of a chat",
+      inputSchema: z.object({
+        chat_id: z.string().describe("Chat identifier (e.g. iMessage;-;+1234567890)"),
+      }),
+    },
+    async ({ chat_id }) => {
+      try {
+        const participants = database.getChatParticipants(chat_id);
+        return { content: [{ type: "text", text: JSON.stringify(participants, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${(err as Error).message}` }], isError: true };
+      }
+    }
+  );
+
+  return server;
+}
