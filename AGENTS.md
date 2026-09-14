@@ -11,7 +11,7 @@ This repository uses the shared `ai-instructions` system. Source of truth:
 Read in order:
 
 1. [global/](https://github.com/mpacarroll/ai-instructions/tree/main/global), durable rules for every repo (execution, communication, secrets, compliance, git and PR, docs, when stuck, coordination).
-2. Stack conventions: none recorded yet, see [repos/apple-messages-mcp-remote/PROFILE.md](https://github.com/mpacarroll/ai-instructions/blob/main/repos/apple-messages-mcp-remote/PROFILE.md).
+2. [stacks/node-mcp-server/CONVENTIONS.md](https://github.com/mpacarroll/ai-instructions/blob/main/stacks/node-mcp-server/CONVENTIONS.md), stack conventions for this repo.
 3. [repos/apple-messages-mcp-remote/PROFILE.md](https://github.com/mpacarroll/ai-instructions/blob/main/repos/apple-messages-mcp-remote/PROFILE.md), repo-specific overrides and context.
 4. `CLAUDE.md` at the root of this repo, which also holds accumulated repo knowledge.
 

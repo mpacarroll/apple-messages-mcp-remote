@@ -9,7 +9,7 @@ The "Repo knowledge" section at the bottom belongs to this repo; add to it freel
 
 This repository uses the shared [ai-instructions](https://github.com/mpacarroll/ai-instructions) system.
 
-- Stack: `unknown`. Add a stack link to the `## Stacks` section of [repos/apple-messages-mcp-remote/PROFILE.md](https://github.com/mpacarroll/ai-instructions/blob/main/repos/apple-messages-mcp-remote/PROFILE.md) and re-run the sync script.
+- Stack: `node-mcp-server`, conventions at [stacks/node-mcp-server/CONVENTIONS.md](https://github.com/mpacarroll/ai-instructions/blob/main/stacks/node-mcp-server/CONVENTIONS.md)
 - Repo profile: [repos/apple-messages-mcp-remote/PROFILE.md](https://github.com/mpacarroll/ai-instructions/blob/main/repos/apple-messages-mcp-remote/PROFILE.md)
 - Durable rules: [global/](https://github.com/mpacarroll/ai-instructions/tree/main/global)
 
