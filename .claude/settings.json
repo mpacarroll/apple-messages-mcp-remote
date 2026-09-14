@@ -1,0 +1,27 @@
+{
+  "extraKnownMarketplaces": {
+    "mpacarroll-ai": {
+      "source": {
+        "source": "github",
+        "repo": "mpacarroll/ai-instructions"
+      }
+    },
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    },
+    "ui-ux-pro-max-skill": {
+      "source": {
+        "source": "github",
+        "repo": "nextlevelbuilder/ui-ux-pro-max-skill"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "carroll-core@mpacarroll-ai": true,
+    "claude-code-setup@claude-plugins-official": true,
+    "ui-ux-pro-max@ui-ux-pro-max-skill": true
+  }
+}
