@@ -3,3 +3,8 @@ build/
 .DS_Store
 .env
 *.log
+
+# Holds the MCP auth token. .env.example is the tracked one.
+deploy/apple-messages-mcp-remote.env
+deploy/dry-run/
+*.plist

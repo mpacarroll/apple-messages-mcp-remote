@@ -65,18 +65,44 @@ This adds an HTTP transport (Streamable HTTP, the current MCP spec's remote tran
 |---|---|---|
 | `MCP_TRANSPORT` | no (default `stdio`) | Set to `http` to enable the remote server. |
 | `MCP_AUTH_TOKEN` | yes, in `http` mode | Bearer token every request must present. Generate with `openssl rand -hex 32`. Must be at least 32 characters — the server refuses to start otherwise. Never commit this. |
+| `MCP_PUBLIC_HOST` | yes, in `http` mode | The hostname your tunnel actually serves this on, for example `messages.your-tunnel.example`. Every request's `Host` header is checked against this and rejected with `421` on a mismatch: DNS-rebinding protection, implemented here rather than through the MCP SDK's `enableDnsRebindingProtection`, which is deprecated in favor of exactly this, a check in front of the transport. |
 | `MCP_PORT` | no (default `8443`) | Port to listen on. |
 | `MCP_HOST` | no (default `127.0.0.1`) | Bind address. Leave this on loopback and reach it through a tunnel (see below) rather than binding `0.0.0.0` and exposing a raw port. |
 
-**Do not expose a raw open port on the public internet.** Put a private tunnel in front of this instead — [Tailscale](https://tailscale.com) or a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) both work well and mean the port is never directly internet-routable, the bearer token is a second layer rather than your only layer, and you get to revoke access by removing a device/tunnel rather than by hoping nobody guessed the token.
+**Do not expose a raw open port on the public internet.** Put a private tunnel in front of this instead. [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) is what this project's sibling ([mcp-timeline](https://github.com/mpacarroll/mcp-timeline)) already runs, so it's the tested path:
 
-**Connecting a client**, once the tunnel is up:
+```bash
+brew install cloudflared
+cloudflared tunnel login
+cloudflared tunnel create apple-messages
+cloudflared tunnel route dns apple-messages messages.your-domain.example
+```
+
+Then a config file, typically `~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: apple-messages
+credentials-file: /Users/you/.cloudflared/<tunnel-id>.json
+
+ingress:
+  - hostname: messages.your-domain.example
+    service: http://127.0.0.1:8443
+  - service: http_status:404
+```
+
+```bash
+cloudflared service install   # registers it as its own background service, survives reboot on its own
+```
+
+`MCP_PUBLIC_HOST` in your env file is that same `messages.your-domain.example`. [Tailscale](https://tailscale.com) works too if you'd rather keep this on a private network you control instead of a public hostname; either way, the port is never directly internet-routable, the bearer token is a second layer rather than your only layer, and you get to revoke access by removing a tunnel or device rather than by hoping nobody guessed the token.
+
+**Connecting to Claude**, once the tunnel is up:
 
 ```json
 {
   "mcpServers": {
     "apple-messages-remote": {
-      "url": "https://your-tunnel-hostname/",
+      "url": "https://messages.your-domain.example/",
       "headers": {
         "Authorization": "Bearer <your MCP_AUTH_TOKEN>"
       }
@@ -85,7 +111,31 @@ This adds an HTTP transport (Streamable HTTP, the current MCP spec's remote tran
 }
 ```
 
+For Claude Desktop, that goes in `claude_desktop_config.json` alongside the local example above. For claude.ai, add it under Settings → Connectors → Add custom connector, with the same URL and an `Authorization: Bearer <token>` header.
+
 **What this does *not* do:** encrypt anything beyond what your tunnel provides, rate-limit requests, expire or rotate the token automatically, or provide per-tool permission scoping (a valid token can call every tool, including `send_message`). If any of that matters for your setup, treat this as a starting point, not a finished security product — patches welcome.
+
+## Running it unattended (macOS)
+
+Started from a terminal, the process dies when the window closes or the machine reboots. For a server other sessions expect to reach at any time, that's an outage you find out about the next time you ask it something.
+
+`deploy/install-macos.sh` installs the HTTP server as a launchd user agent, so it starts at login and restarts if it crashes:
+
+```bash
+npm install && npm run build      # build/index.js has to exist first
+./deploy/install-macos.sh --dry-run   # inspect the generated plist first
+./deploy/install-macos.sh             # install and load it
+```
+
+The first run creates `deploy/apple-messages-mcp-remote.env` from `.env.example` with a freshly generated `MCP_AUTH_TOKEN`. Set `MCP_PUBLIC_HOST` in that file to your tunnel hostname before installing; without it the server rejects every tunneled request with `421 Invalid Host header`. The env file and the generated plist hold the token, so both are written owner-only, and the env file is gitignored.
+
+```bash
+launchctl list | grep apple-messages-mcp-remote   # status
+tail -f ~/Library/Logs/apple-messages-mcp-remote/*.log   # logs
+./deploy/install-macos.sh --uninstall             # remove the service
+```
+
+The tunnel itself is separate; `cloudflared service install` (above) already registers it as its own background service.
 
 ## Requirements
 
