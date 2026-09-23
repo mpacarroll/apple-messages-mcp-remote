@@ -42,3 +42,16 @@ Durable, repo-specific context lives here and in `.claude/rules/`. Architecture 
 In-flight task state is separate: it lives in `.claude/state/handoff.md`, written by any session that stops mid-task (the injected Coordination rules make this automatic) and injected into the next session by the plugin's SessionStart hook. Durable facts here, current-task state there.
 
 <!-- repo-knowledge: content below this line is preserved by sync-repo.sh -->
+
+## Deploy status, 2026-09-21
+
+`deploy/install-macos.sh` now exists, matching the mcp-timeline pattern (launchd user agent, same idempotent env-file-with-fresh-token creation, same "ask launchctl afterward, don't trust its exit code" verification, dry-run mode that works on any OS including this cloud sandbox). Verified end to end in this environment via `--dry-run`: env creation, the `MCP_PUBLIC_HOST` placeholder guard, and plist generation all work as written. What isn't and can't be verified from here: the actual launchd load, Full Disk Access, and a live tunnel, since those need the real Mac.
+
+Added `MCP_PUBLIC_HOST` Host-header validation to `http-transport.ts` (`isAllowedHost`), which this fork didn't have before. mcp-timeline's Python server gets the same protection from the MCP SDK's built-in `enableDnsRebindingProtection`; the TypeScript SDK has the equivalent flag too, but it's marked deprecated in favor of doing the check in front of the transport, which is what `isAllowedHost` does. Tested in `tests/http-transport.test.ts`.
+
+That test file imports from `../build/http-transport.js`, not `../src/http-transport.ts` like `database.test.ts` does. Reason: `http-transport.ts` has a local sibling import (`./server.js`), and this repo's `tsconfig.json` uses `Node16` module resolution, which requires that `.js`-suffixed specifier even though the real file is `.ts`. Node's `--experimental-strip-types` runner doesn't rewrite that, so it can only resolve the specifier against a real `server.js`, which only exists after `tsc` runs. `database.ts` has no local imports, so `database.test.ts` never hit this. `npm test` now runs `npm run build` first for exactly this reason.
+
+Chose Cloudflare Tunnel over Tailscale in the README's walkthrough, since mcp-timeline already runs on it (proven on this same operator's Mac) rather than because Tailscale is worse; either works.
+
+Not done: registering this as a live Claude connector, running the installer on the real Mac, generating the real token there, and wiring the actual tunnel. Those are on-device steps for the operator.
+
