@@ -76,6 +76,83 @@ export function extractTextFromAttributedBody(blob: Buffer | Uint8Array | null |
 }
 
 /**
+ * Read a voice message's transcript from its audio attachment's user_info,
+ * a binary plist dict that keeps it under "audio-transcription". Only that
+ * key is read: the same dict holds the attachment's decryption key and
+ * download URL, which must never be returned. Malformed input yields null.
+ */
+export function extractAudioTranscript(userInfo: Buffer | Uint8Array | null | undefined): string | null {
+  if (!userInfo || userInfo.length === 0) return null;
+  const buf = Buffer.isBuffer(userInfo) ? userInfo : Buffer.from(userInfo);
+  try {
+    return readBinaryPlistDictString(buf, "audio-transcription");
+  } catch {
+    return null;
+  }
+}
+
+// Minimal reader for Apple's bplist00 format: enough to look up one string
+// value in a top-level dict. Every offset is bounds-checked; anything that
+// doesn't fit the format throws and the caller turns it into null.
+function readBinaryPlistDictString(buf: Buffer, wanted: string): string | null {
+  const TRAILER = 32;
+  if (buf.length < 8 + TRAILER || buf.toString("latin1", 0, 8) !== "bplist00") return null;
+
+  const t = buf.length - TRAILER;
+  const offsetSize = buf[t + 6];
+  const refSize = buf[t + 7];
+  const numObjects = Number(buf.readBigUInt64BE(t + 8));
+  const topObject = Number(buf.readBigUInt64BE(t + 16));
+  const offsetTable = Number(buf.readBigUInt64BE(t + 24));
+  if (offsetSize < 1 || offsetSize > 8 || refSize < 1 || refSize > 8) return null;
+  if (topObject >= numObjects || offsetTable + numObjects * offsetSize > t) return null;
+
+  const uint = (at: number, size: number): number => {
+    if (at < 0 || at + size > t) throw new RangeError("out of bounds");
+    let value = 0;
+    for (let i = 0; i < size; i++) value = value * 256 + buf[at + i];
+    return value;
+  };
+  const objectAt = (ref: number): number => {
+    if (ref >= numObjects) throw new RangeError("bad object ref");
+    const at = uint(offsetTable + ref * offsetSize, offsetSize);
+    if (at < 8 || at >= offsetTable) throw new RangeError("bad object offset");
+    return at;
+  };
+  // Low nibble 0xF means the count follows as its own integer object.
+  const countAt = (at: number): [count: number, start: number] => {
+    const nibble = buf[at] & 0x0f;
+    if (nibble !== 0x0f) return [nibble, at + 1];
+    const marker = buf[at + 1];
+    if ((marker & 0xf0) !== 0x10) throw new RangeError("bad count");
+    const size = 1 << (marker & 0x0f);
+    return [uint(at + 2, size), at + 2 + size];
+  };
+  const stringAt = (ref: number): string | null => {
+    const at = objectAt(ref);
+    const type = buf[at] & 0xf0;
+    if (type !== 0x50 && type !== 0x60) return null;
+    const [count, start] = countAt(at);
+    const bytes = type === 0x50 ? count : count * 2;
+    if (start + bytes > offsetTable) throw new RangeError("string out of bounds");
+    if (type === 0x50) return buf.toString("latin1", start, start + bytes);
+    // 0x60 is UTF-16 big-endian; Node only decodes little-endian.
+    return Buffer.from(buf.subarray(start, start + bytes)).swap16().toString("utf16le");
+  };
+
+  const top = objectAt(topObject);
+  if ((buf[top] & 0xf0) !== 0xd0) return null;
+  const [entries, refs] = countAt(top);
+  if (refs + entries * 2 * refSize > offsetTable) return null;
+  for (let i = 0; i < entries; i++) {
+    if (stringAt(uint(refs + i * refSize, refSize)) === wanted) {
+      return stringAt(uint(refs + (entries + i) * refSize, refSize));
+    }
+  }
+  return null;
+}
+
+/**
  * Get the message text, preferring the text column and falling back to attributedBody blob parsing.
  */
 export function getMessageText(text: string | null, attributedBody: Buffer | Uint8Array | null): string | null {
@@ -147,6 +224,7 @@ export interface Message {
   text: string | null;
   is_from_me: boolean;
   is_audio_message: boolean;
+  audio_transcript: string | null;
   date: string | null;
   sender: string | null;
   service: string | null;
@@ -185,6 +263,12 @@ export function getChatMessages(chatId: string, limit: number = 100, fromDate?: 
         m.attributedBody,
         m.is_from_me,
         m.is_audio_message,
+        CASE WHEN m.is_audio_message = 1 THEN (
+          SELECT a.user_info FROM message_attachment_join maj
+          JOIN attachment a ON a.ROWID = maj.attachment_id
+          WHERE maj.message_id = m.ROWID AND a.user_info IS NOT NULL
+          LIMIT 1
+        ) END as audio_user_info,
         ${DATE_SQL("m.date")} as date,
         m.service,
         h.id as sender
@@ -201,6 +285,7 @@ export function getChatMessages(chatId: string, limit: number = 100, fromDate?: 
       attributedBody: Buffer | null;
       is_from_me: number;
       is_audio_message: number;
+      audio_user_info: Uint8Array | null;
       date: string | null;
       service: string | null;
       sender: string | null;
@@ -211,6 +296,7 @@ export function getChatMessages(chatId: string, limit: number = 100, fromDate?: 
       text: getMessageText(row.text, row.attributedBody),
       is_from_me: row.is_from_me === 1,
       is_audio_message: row.is_audio_message === 1,
+      audio_transcript: extractAudioTranscript(row.audio_user_info),
       date: row.date,
       sender: row.sender,
       service: row.service,
@@ -225,6 +311,7 @@ export interface SearchResult {
   text: string | null;
   is_from_me: boolean;
   is_audio_message: boolean;
+  audio_transcript: string | null;
   date: string | null;
   sender: string | null;
   chat_id: string;
@@ -248,6 +335,12 @@ export function searchMessages(query: string, chatId?: string, limit: number = 5
           m.attributedBody,
           m.is_from_me,
           m.is_audio_message,
+          CASE WHEN m.is_audio_message = 1 THEN (
+            SELECT a.user_info FROM message_attachment_join maj
+            JOIN attachment a ON a.ROWID = maj.attachment_id
+            WHERE maj.message_id = m.ROWID AND a.user_info IS NOT NULL
+            LIMIT 1
+          ) END as audio_user_info,
           ${DATE_SQL("m.date")} as date,
           h.id as sender,
           c.chat_identifier as chat_id
@@ -269,6 +362,12 @@ export function searchMessages(query: string, chatId?: string, limit: number = 5
           m.attributedBody,
           m.is_from_me,
           m.is_audio_message,
+          CASE WHEN m.is_audio_message = 1 THEN (
+            SELECT a.user_info FROM message_attachment_join maj
+            JOIN attachment a ON a.ROWID = maj.attachment_id
+            WHERE maj.message_id = m.ROWID AND a.user_info IS NOT NULL
+            LIMIT 1
+          ) END as audio_user_info,
           ${DATE_SQL("m.date")} as date,
           h.id as sender,
           c.chat_identifier as chat_id
@@ -289,6 +388,7 @@ export function searchMessages(query: string, chatId?: string, limit: number = 5
       attributedBody: Buffer | null;
       is_from_me: number;
       is_audio_message: number;
+      audio_user_info: Uint8Array | null;
       date: string | null;
       sender: string | null;
       chat_id: string;
@@ -299,6 +399,7 @@ export function searchMessages(query: string, chatId?: string, limit: number = 5
       text: getMessageText(row.text, row.attributedBody),
       is_from_me: row.is_from_me === 1,
       is_audio_message: row.is_audio_message === 1,
+      audio_transcript: extractAudioTranscript(row.audio_user_info),
       date: row.date,
       sender: row.sender,
       chat_id: row.chat_id,

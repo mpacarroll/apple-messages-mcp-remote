@@ -1,7 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import * as userInfo from "./fixtures/audio-user-info.ts";
 import {
   appleTimestampToISO,
+  extractAudioTranscript,
   extractTextFromAttributedBody,
   getMessageText,
   listChats,
@@ -120,6 +122,54 @@ describe("extractTextFromAttributedBody", () => {
   });
 });
 
+describe("extractAudioTranscript", () => {
+  it("reads a transcript whose length is inline", () => {
+    assert.equal(extractAudioTranscript(userInfo.INLINE_LENGTH), "Be right there");
+  });
+
+  it("returns only the transcript, never the other user_info keys", () => {
+    const result = extractAudioTranscript(userInfo.WITH_SENSITIVE_KEYS);
+    assert.equal(result, "Running ten minutes late");
+  });
+
+  it("reads a long transcript in full", () => {
+    const result = extractAudioTranscript(userInfo.LONG_TRANSCRIPT);
+    assert.equal(result?.length, 900);
+    assert.ok(result?.startsWith("Long ascii transcript sentence."));
+  });
+
+  it("decodes UTF-16 text, including surrogate pairs", () => {
+    assert.equal(
+      extractAudioTranscript(userInfo.UNICODE),
+      "On my way, café first 🙂 back soon — really"
+    );
+  });
+
+  it("returns null when the message was not transcribed", () => {
+    assert.equal(extractAudioTranscript(userInfo.NO_TRANSCRIPT), null);
+  });
+
+  it("returns null when the top-level object is not a dict", () => {
+    assert.equal(extractAudioTranscript(userInfo.TOP_LEVEL_ARRAY), null);
+  });
+
+  it("returns null for null, empty, and non-plist input", () => {
+    assert.equal(extractAudioTranscript(null), null);
+    assert.equal(extractAudioTranscript(Buffer.alloc(0)), null);
+    assert.equal(extractAudioTranscript(Buffer.from("not a plist at all, just text")), null);
+  });
+
+  it("returns null instead of throwing on truncated or corrupted data", () => {
+    const full = userInfo.WITH_SENSITIVE_KEYS;
+    for (const cut of [8, 40, full.length - 32, full.length - 1]) {
+      assert.equal(extractAudioTranscript(full.subarray(0, cut)), null, `cut at ${cut}`);
+    }
+    const corrupted = Buffer.from(full);
+    corrupted.fill(0xff, full.length - 32);
+    assert.equal(extractAudioTranscript(corrupted), null);
+  });
+});
+
 describe("getMessageText", () => {
   it("returns text when text is available", () => {
     assert.equal(getMessageText("hello", null), "hello");
@@ -184,6 +234,10 @@ describe("getChatMessages (integration)", () => {
         assert.ok("service" in msg);
         assert.equal(typeof msg.is_from_me, "boolean");
         assert.equal(typeof msg.is_audio_message, "boolean");
+      }
+      for (const m of messages) {
+        if (!m.is_audio_message) assert.equal(m.audio_transcript, null);
+        else assert.ok(m.audio_transcript === null || typeof m.audio_transcript === "string");
       }
     }
   });

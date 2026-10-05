@@ -25,8 +25,8 @@ npx apple-messages-mcp-remote
 | Tool | Description |
 |------|-------------|
 | `list_chats` | List recent chats with last message preview |
-| `get_chat_messages` | Get message history for a specific chat (with optional date range filtering). Voice messages are flagged with `is_audio_message` |
-| `search_messages` | Search messages by text content |
+| `get_chat_messages` | Get message history for a specific chat (with optional date range filtering). Voice messages are flagged with `is_audio_message` and carry `audio_transcript` once macOS has transcribed them |
+| `search_messages` | Search messages by text content. Results carry the same voice-message fields |
 | `send_message` | Send an iMessage or SMS |
 | `get_chat_participants` | Get participants of a chat |
 
