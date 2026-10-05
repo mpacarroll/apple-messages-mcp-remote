@@ -84,14 +84,24 @@ for f in /Library/LaunchDaemons/*cloudflare*.plist "$HOME/Library/LaunchAgents"/
 done
 [[ "$found_plist" -eq 0 ]] && echo "no cloudflared plist found in either location"
 
-section "config files (ingress rules only, nothing else printed)"
+section "config files (tunnel, credentials path, and ingress rules; no secret contents)"
+# Built explicitly rather than with one glob list: $HOME/.cloudflared/config.yml
+# matches both the literal path below and the $HOME/.cloudflared/*.yml glob,
+# which printed it twice until this split out the glob and skipped the dupe.
+config_candidates=()
+[[ -f /etc/cloudflared/config.yml ]] && config_candidates+=(/etc/cloudflared/config.yml)
+[[ -f "$HOME/.cloudflared/config.yml" ]] && config_candidates+=("$HOME/.cloudflared/config.yml")
+for f in "$HOME/.cloudflared"/*.yml; do
+  [[ -f "$f" ]] || continue
+  [[ "$f" == "$HOME/.cloudflared/config.yml" ]] && continue
+  config_candidates+=("$f")
+done
 found_config=0
-for f in /etc/cloudflared/config.yml "$HOME/.cloudflared/config.yml" "$HOME/.cloudflared"/*.yml; do
-  if [[ -f "$f" ]]; then
-    found_config=1
-    echo "--- $f ---"
-    grep -E 'tunnel:|hostname:|service:' "$f" 2>/dev/null || echo "(no ingress lines matched; check the file by hand)"
-  fi
+for f in "${config_candidates[@]}"; do
+  found_config=1
+  echo "--- $f ---"
+  grep -E 'tunnel:|credentials-file:|ingress:|hostname:|service:' "$f" 2>/dev/null \
+    || echo "(no ingress lines matched; check the file by hand)"
 done
 [[ "$found_config" -eq 0 ]] && echo "no cloudflared config.yml found in /etc/cloudflared or ~/.cloudflared"
 
@@ -125,4 +135,32 @@ cat <<'EOF'
   collide with. Follow the README's "Remote setup" section as written,
   with its own tunnel name (for example `apple-messages`, not a name
   mcp-timeline already owns).
+- A LaunchAgent or LaunchDaemon whose ProgramArguments is just the bare
+  `cloudflared` binary with nothing after it (no `tunnel`, no `run`, no
+  `--config`) is a broken install, not a working tunnel: it starts, does
+  nothing useful, and `launchctl list` will show it as not currently
+  running. Rewrite its ProgramArguments to `cloudflared tunnel run
+  <name>` (the name from that config's own `tunnel:` key) and reload it.
+
+== After fixing the plist, two more things that look like tunnel bugs but aren't ==
+
+- `cloudflared tunnel route dns <name> <host>` has to have actually been
+  run for that hostname. If a healthz request fails with curl's "Could
+  not resolve host", that is a missing DNS record, not a broken tunnel:
+  run the route command (safe to re-run; it no-ops if the record already
+  exists) and check again.
+- After adding or changing that DNS record, curl can still fail to
+  resolve for a few minutes even though `dig +short <host>` already
+  returns good addresses: macOS's system resolver (what curl uses) caches
+  negative answers separately from what `dig` queries directly. Flush it
+  with `sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder`
+  before assuming anything is still broken.
+- A 401 after DNS resolves points at the bearer token, not the tunnel:
+  the running server uses whatever MCP_AUTH_TOKEN was baked into its
+  plist's EnvironmentVariables at the last `install-macos.sh` run, not
+  whatever currently happens to be in the `.env` file. If the file was
+  edited or regenerated since, they can quietly drift apart. Compare the
+  two without printing either in full (length and a few characters is
+  enough to tell them apart) and re-run `install-macos.sh` to resync the
+  plist to the current `.env` file if they don't match.
 EOF
