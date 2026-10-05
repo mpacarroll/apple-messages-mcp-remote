@@ -69,7 +69,17 @@ This adds an HTTP transport (Streamable HTTP, the current MCP spec's remote tran
 | `MCP_PORT` | no (default `8443`) | Port to listen on. |
 | `MCP_HOST` | no (default `127.0.0.1`) | Bind address. Leave this on loopback and reach it through a tunnel (see below) rather than binding `0.0.0.0` and exposing a raw port. |
 
-**Do not expose a raw open port on the public internet.** Put a private tunnel in front of this instead. [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) is what this project's sibling ([mcp-timeline](https://github.com/mpacarroll/mcp-timeline)) already runs, so it's the tested path:
+**Do not expose a raw open port on the public internet.** Put a private tunnel in front of this instead. [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) is what this project's sibling ([mcp-timeline](https://github.com/mpacarroll/mcp-timeline)) already runs, so it's the tested path.
+
+**Before touching cloudflared, check what is already there:**
+
+```bash
+./deploy/diagnose-cloudflared.sh
+```
+
+It only reads (processes, launchd jobs, plist and config file contents) and changes nothing. This matters because `cloudflared service install` manages exactly one system service with one default config; running it again for this server does not add a second tunnel, it overwrites the registration of whichever tunnel already exists. If another tool on this Mac (mcp-timeline, for instance) already runs one, follow "Adding to an existing tunnel" below instead of "Fresh setup."
+
+**Fresh setup**, if the script above found no existing tunnel:
 
 ```bash
 brew install cloudflared
@@ -94,7 +104,22 @@ ingress:
 cloudflared service install   # registers it as its own background service, survives reboot on its own
 ```
 
-`MCP_PUBLIC_HOST` in your env file is that same `messages.your-domain.example`. [Tailscale](https://tailscale.com) works too if you'd rather keep this on a private network you control instead of a public hostname; either way, the port is never directly internet-routable, the bearer token is a second layer rather than your only layer, and you get to revoke access by removing a tunnel or device rather than by hoping nobody guessed the token.
+**Adding to an existing tunnel**, if the script found one already running: add one ingress entry to that tunnel's own config.yml, above its final `service: http_status:404` line, using this server's own hostname and port:
+
+```yaml
+  - hostname: messages.your-domain.example
+    service: http://127.0.0.1:8443
+```
+
+Route DNS for the new hostname under that same tunnel (its name is the `tunnel:` key already in that file), then reload the service that owns it instead of reinstalling it:
+
+```bash
+cloudflared tunnel route dns <existing-tunnel-name> messages.your-domain.example
+sudo launchctl kickstart -k system/com.cloudflare.cloudflared      # if it's a root-level LaunchDaemon
+launchctl kickstart -k gui/$(id -u)/com.cloudflare.cloudflared    # if it's a user-level LaunchAgent
+```
+
+Either way, `MCP_PUBLIC_HOST` in your env file is that same `messages.your-domain.example`. [Tailscale](https://tailscale.com) works too if you'd rather keep this on a private network you control instead of a public hostname; either way, the port is never directly internet-routable, the bearer token is a second layer rather than your only layer, and you get to revoke access by removing a tunnel or device rather than by hoping nobody guessed the token.
 
 **Connecting to Claude**, once the tunnel is up:
 
