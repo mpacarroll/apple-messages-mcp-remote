@@ -28,11 +28,10 @@ export function appleTimestampToISO(timestamp: number | null | undefined): strin
 /**
  * Extract plain text from an NSAttributedString binary blob (attributedBody column).
  *
- * The blob contains a serialized NSAttributedString. The plain text is stored
- * after a "NSString" marker followed by a length-prefixed UTF-8 string.
- * Length encoding: if the first byte after the marker is < 0x80, it's the length directly.
- * Otherwise, (byte & 0x0f) gives the number of following bytes that encode the length
- * in little-endian order.
+ * The blob is an NSArchiver typedstream. The plain text follows an "NSString"
+ * marker as a length-prefixed UTF-8 string, with the length (in bytes) in
+ * typedstream integer encoding: a single byte below 0x80, or the tag 0x81
+ * followed by an int16, or 0x82 followed by an int32, both little-endian.
  */
 export function extractTextFromAttributedBody(blob: Buffer | Uint8Array | null | undefined): string | null {
   if (!blob || blob.length === 0) return null;
@@ -54,18 +53,17 @@ export function extractTextFromAttributedBody(blob: Buffer | Uint8Array | null |
   let textLength: number;
   let textStart: number;
 
-  if ((lengthByte & 0x80) === 0) {
-    // Simple case: length fits in one byte
+  if (lengthByte < 0x80) {
     textLength = lengthByte;
     textStart = idx + 1;
+  } else if (lengthByte === 0x81 && idx + 3 <= buf.length) {
+    textLength = buf.readUInt16LE(idx + 1);
+    textStart = idx + 3;
+  } else if (lengthByte === 0x82 && idx + 5 <= buf.length) {
+    textLength = buf.readUInt32LE(idx + 1);
+    textStart = idx + 5;
   } else {
-    // Extended case: low nibble tells how many bytes encode the length
-    const numLengthBytes = lengthByte & 0x0f;
-    textStart = idx + 1 + numLengthBytes;
-    textLength = 0;
-    for (let i = 0; i < numLengthBytes; i++) {
-      textLength |= buf[idx + 1 + i] << (8 * i);
-    }
+    return null;
   }
 
   if (textStart + textLength > buf.length) {
@@ -148,6 +146,7 @@ export interface Message {
   rowid: number;
   text: string | null;
   is_from_me: boolean;
+  is_audio_message: boolean;
   date: string | null;
   sender: string | null;
   service: string | null;
@@ -185,6 +184,7 @@ export function getChatMessages(chatId: string, limit: number = 100, fromDate?: 
         m.text,
         m.attributedBody,
         m.is_from_me,
+        m.is_audio_message,
         ${DATE_SQL("m.date")} as date,
         m.service,
         h.id as sender
@@ -200,6 +200,7 @@ export function getChatMessages(chatId: string, limit: number = 100, fromDate?: 
       text: string | null;
       attributedBody: Buffer | null;
       is_from_me: number;
+      is_audio_message: number;
       date: string | null;
       service: string | null;
       sender: string | null;
@@ -209,6 +210,7 @@ export function getChatMessages(chatId: string, limit: number = 100, fromDate?: 
       rowid: row.rowid,
       text: getMessageText(row.text, row.attributedBody),
       is_from_me: row.is_from_me === 1,
+      is_audio_message: row.is_audio_message === 1,
       date: row.date,
       sender: row.sender,
       service: row.service,
@@ -222,6 +224,7 @@ export interface SearchResult {
   rowid: number;
   text: string | null;
   is_from_me: boolean;
+  is_audio_message: boolean;
   date: string | null;
   sender: string | null;
   chat_id: string;
@@ -244,6 +247,7 @@ export function searchMessages(query: string, chatId?: string, limit: number = 5
           m.text,
           m.attributedBody,
           m.is_from_me,
+          m.is_audio_message,
           ${DATE_SQL("m.date")} as date,
           h.id as sender,
           c.chat_identifier as chat_id
@@ -264,6 +268,7 @@ export function searchMessages(query: string, chatId?: string, limit: number = 5
           m.text,
           m.attributedBody,
           m.is_from_me,
+          m.is_audio_message,
           ${DATE_SQL("m.date")} as date,
           h.id as sender,
           c.chat_identifier as chat_id
@@ -283,6 +288,7 @@ export function searchMessages(query: string, chatId?: string, limit: number = 5
       text: string | null;
       attributedBody: Buffer | null;
       is_from_me: number;
+      is_audio_message: number;
       date: string | null;
       sender: string | null;
       chat_id: string;
@@ -292,6 +298,7 @@ export function searchMessages(query: string, chatId?: string, limit: number = 5
       rowid: row.rowid,
       text: getMessageText(row.text, row.attributedBody),
       is_from_me: row.is_from_me === 1,
+      is_audio_message: row.is_audio_message === 1,
       date: row.date,
       sender: row.sender,
       chat_id: row.chat_id,
