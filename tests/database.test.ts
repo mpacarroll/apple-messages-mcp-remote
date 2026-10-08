@@ -216,6 +216,14 @@ describe("listChats (integration)", () => {
       assert.equal(typeof chat.chat_id, "string");
     }
   });
+
+  it("orders chats by latest message, newest first, empty chats last", () => {
+    const dates = listChats(25).map((c) => c.last_message_date);
+    const firstEmpty = dates.indexOf(null);
+    const dated = firstEmpty === -1 ? dates : dates.slice(0, firstEmpty);
+    if (firstEmpty !== -1) assert.ok(dates.slice(firstEmpty).every((d) => d === null));
+    assert.deepEqual(dated, [...dated].sort().reverse());
+  });
 });
 
 describe("getChatMessages (integration)", () => {

@@ -180,25 +180,28 @@ export interface Chat {
 export function listChats(limit: number = 50): Chat[] {
   const db = openDb();
   try {
+    // Find each chat's latest message with a MAX() aggregate, then read text
+    // only for the chats that survive the LIMIT. With exactly one MAX(),
+    // SQLite fills the bare message_id column from the row holding the max.
+    // Ranking every message with a window function instead dragged each
+    // one's text and attributedBody through a full sort: seconds per call.
     const rows = db.prepare(`
+      WITH latest AS (
+        SELECT cmj.chat_id, cmj.message_id, MAX(m.date) AS date
+        FROM chat_message_join cmj
+        JOIN message m ON m.ROWID = cmj.message_id
+        GROUP BY cmj.chat_id
+      )
       SELECT
         c.chat_identifier as chat_id,
         c.display_name,
-        ${DATE_SQL("m.date")} as last_message_date,
+        ${DATE_SQL("latest.date")} as last_message_date,
         m.text,
         m.attributedBody
       FROM chat c
-      LEFT JOIN (
-        SELECT
-          cmj.chat_id,
-          m.date,
-          m.text,
-          m.attributedBody,
-          ROW_NUMBER() OVER (PARTITION BY cmj.chat_id ORDER BY m.date DESC) as rn
-        FROM chat_message_join cmj
-        JOIN message m ON m.ROWID = cmj.message_id
-      ) m ON m.chat_id = c.ROWID AND m.rn = 1
-      ORDER BY m.date DESC NULLS LAST
+      LEFT JOIN latest ON latest.chat_id = c.ROWID
+      LEFT JOIN message m ON m.ROWID = latest.message_id
+      ORDER BY latest.date DESC NULLS LAST
       LIMIT ?
     `).all(limit) as Array<{
       chat_id: string;
