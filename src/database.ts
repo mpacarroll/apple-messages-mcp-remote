@@ -321,71 +321,82 @@ export interface SearchResult {
 }
 
 /**
- * Search messages by text content using LIKE.
+ * Make message_text(text, attributedBody) callable from SQL, returning the
+ * same decoded text getMessageText gives callers. Needs Node 22.13+; returns
+ * false on older Node, where search falls back to the text column only.
+ */
+function registerMessageText(db: DatabaseSync): boolean {
+  if (typeof db.function !== "function") return false;
+  db.function("message_text", { deterministic: true }, (text, body) =>
+    getMessageText(typeof text === "string" ? text : null, body instanceof Uint8Array ? body : null)
+  );
+  return true;
+}
+
+/**
+ * Search messages by text content, case-insensitively for ASCII as LIKE is.
+ *
+ * Text that exists only in attributedBody has to be decoded before it can be
+ * matched: SQLite's LIKE reads a BLOB as text and stops at the first NUL,
+ * which in an attributedBody comes long before the message text, and raw
+ * bytes would also match class and attribute names like "NSString". So a
+ * native byte search narrows candidates and message_text() confirms them.
  */
 export function searchMessages(query: string, chatId?: string, limit: number = 50): SearchResult[] {
   const db = openDb();
   try {
-    const likePattern = `%${query}%`;
-    let sql: string;
-    let params: (string | number)[];
+    const likePattern = `%${query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const where: string[] = [];
+    const params: (string | number)[] = [];
 
     if (chatId) {
-      sql = `
-        SELECT
-          m.ROWID as rowid,
-          m.text,
-          m.attributedBody,
-          m.is_from_me,
-          m.is_audio_message,
-          CASE WHEN m.is_audio_message = 1 THEN (
-            SELECT a.user_info FROM message_attachment_join maj
-            JOIN attachment a ON a.ROWID = maj.attachment_id
-            WHERE maj.message_id = m.ROWID AND a.user_info IS NOT NULL
-            LIMIT 1
-          ) END as audio_user_info,
-          ${DATE_SQL("m.date")} as date,
-          h.id as sender,
-          c.chat_identifier as chat_id
-        FROM message m
-        JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
-        JOIN chat c ON c.ROWID = cmj.chat_id
-        LEFT JOIN handle h ON h.ROWID = m.handle_id
-        WHERE c.chat_identifier = ?
-          AND (m.text LIKE ? OR m.attributedBody LIKE ?)
-        ORDER BY m.date DESC
-        LIMIT ?
-      `;
-      params = [chatId, likePattern, likePattern, limit];
-    } else {
-      sql = `
-        SELECT
-          m.ROWID as rowid,
-          m.text,
-          m.attributedBody,
-          m.is_from_me,
-          m.is_audio_message,
-          CASE WHEN m.is_audio_message = 1 THEN (
-            SELECT a.user_info FROM message_attachment_join maj
-            JOIN attachment a ON a.ROWID = maj.attachment_id
-            WHERE maj.message_id = m.ROWID AND a.user_info IS NOT NULL
-            LIMIT 1
-          ) END as audio_user_info,
-          ${DATE_SQL("m.date")} as date,
-          h.id as sender,
-          c.chat_identifier as chat_id
-        FROM message m
-        JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
-        JOIN chat c ON c.ROWID = cmj.chat_id
-        LEFT JOIN handle h ON h.ROWID = m.handle_id
-        WHERE m.text LIKE ? OR m.attributedBody LIKE ?
-        ORDER BY m.date DESC
-        LIMIT ?
-      `;
-      params = [likePattern, likePattern, limit];
+      where.push("c.chat_identifier = ?");
+      params.push(chatId);
     }
+    if (registerMessageText(db)) {
+      // Mirrors getMessageText: a non-empty text column is the message, so
+      // match it natively; otherwise decode attributedBody, but only after a
+      // native byte search finds the query in it. lower() folds ASCII on both
+      // sides, as LIKE does, so that pre-check never drops a real match.
+      // Separate WHEN branches, not AND: SQLite doesn't short-circuit AND
+      // inside an expression, and would decode every body-only message.
+      where.push(`CASE
+          WHEN m.text IS NOT NULL AND m.text != '' THEN m.text LIKE ? ESCAPE '\\'
+          WHEN instr(lower(CAST(m.attributedBody AS TEXT)), lower(?)) > 0
+            THEN message_text(NULL, m.attributedBody) LIKE ? ESCAPE '\\'
+          ELSE 0
+        END`);
+      params.push(likePattern, query, likePattern);
+    } else {
+      where.push(`m.text LIKE ? ESCAPE '\\'`);
+      params.push(likePattern);
+    }
+    params.push(limit);
 
-    const rows = db.prepare(sql).all(...params) as Array<{
+    const rows = db.prepare(`
+      SELECT
+        m.ROWID as rowid,
+        m.text,
+        m.attributedBody,
+        m.is_from_me,
+        m.is_audio_message,
+        CASE WHEN m.is_audio_message = 1 THEN (
+          SELECT a.user_info FROM message_attachment_join maj
+          JOIN attachment a ON a.ROWID = maj.attachment_id
+          WHERE maj.message_id = m.ROWID AND a.user_info IS NOT NULL
+          LIMIT 1
+        ) END as audio_user_info,
+        ${DATE_SQL("m.date")} as date,
+        h.id as sender,
+        c.chat_identifier as chat_id
+      FROM message m
+      JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+      JOIN chat c ON c.ROWID = cmj.chat_id
+      LEFT JOIN handle h ON h.ROWID = m.handle_id
+      WHERE ${where.join("\n        AND ")}
+      ORDER BY m.date DESC
+      LIMIT ?
+    `).all(...params) as Array<{
       rowid: number;
       text: string | null;
       attributedBody: Buffer | null;
