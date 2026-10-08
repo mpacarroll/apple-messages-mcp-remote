@@ -1,7 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import * as userInfo from "./fixtures/audio-user-info.ts";
 import {
   appleTimestampToISO,
+  extractAudioTranscript,
   extractTextFromAttributedBody,
   getMessageText,
   listChats,
@@ -59,31 +61,112 @@ describe("extractTextFromAttributedBody", () => {
     assert.equal(extractTextFromAttributedBody(Buffer.from("random data without marker")), null);
   });
 
-  it("extracts text from a synthetic blob with short length", () => {
-    const prefix = Buffer.from("some prefix data ");
-    const marker = Buffer.from("NSString");
-    const overhead = Buffer.alloc(5, 0);
-    const text = "Hello, world!";
-    const lengthByte = Buffer.from([text.length]);
+  // Builds a blob shaped like a real attributedBody: "NSString", the five
+  // typedstream bytes that always follow it in chat.db, then the length in
+  // typedstream integer encoding (one byte below 0x80, 0x81 + int16 LE,
+  // 0x82 + int32 LE), then the UTF-8 bytes, then trailing attribute data.
+  function attributedBody(text: string): Buffer {
     const textBuf = Buffer.from(text, "utf-8");
+    let length: Buffer;
+    if (textBuf.length < 0x80) {
+      length = Buffer.from([textBuf.length]);
+    } else if (textBuf.length <= 0x7fff) {
+      length = Buffer.alloc(3);
+      length[0] = 0x81;
+      length.writeUInt16LE(textBuf.length, 1);
+    } else {
+      length = Buffer.alloc(5);
+      length[0] = 0x82;
+      length.writeUInt32LE(textBuf.length, 1);
+    }
+    return Buffer.concat([
+      Buffer.from("streamtyped NSAttributedString "),
+      Buffer.from("NSString"),
+      Buffer.from([0x01, 0x94, 0x84, 0x01, 0x2b]),
+      length,
+      textBuf,
+      Buffer.from([0x86, 0x84, 0x02, 0x69, 0x49, 0x01]),
+    ]);
+  }
 
-    const blob = Buffer.concat([prefix, marker, overhead, lengthByte, textBuf]);
-    assert.equal(extractTextFromAttributedBody(blob), "Hello, world!");
+  it("extracts a short message (single-byte length)", () => {
+    assert.equal(extractTextFromAttributedBody(attributedBody("Hello, world!")), "Hello, world!");
   });
 
-  it("extracts text from a synthetic blob with extended length", () => {
-    const prefix = Buffer.from("prefix ");
-    const marker = Buffer.from("NSString");
-    const overhead = Buffer.alloc(5, 0);
-    const text = "A".repeat(200);
-    // Extended length: 0x82 means (0x80 | 0x02) = 2 length bytes follow
-    const lengthIndicator = Buffer.from([0x82]);
-    // 200 in little-endian 2 bytes: 0xC8, 0x00
-    const lengthBytes = Buffer.from([0xc8, 0x00]);
-    const textBuf = Buffer.from(text, "utf-8");
+  it("extracts a 127-byte message, the largest single-byte length", () => {
+    const text = "a".repeat(127);
+    assert.equal(extractTextFromAttributedBody(attributedBody(text)), text);
+  });
 
-    const blob = Buffer.concat([prefix, marker, overhead, lengthIndicator, lengthBytes, textBuf]);
-    assert.equal(extractTextFromAttributedBody(blob), text);
+  it("extracts a 200-byte message (0x81 + 2-byte length)", () => {
+    const text = "b".repeat(200);
+    assert.equal(extractTextFromAttributedBody(attributedBody(text)), text);
+  });
+
+  it("does not cut off a 300-byte message", () => {
+    // Regression: 0x81 was read as "one length byte follows", so this came
+    // back as a stray 0x01 plus the first 43 characters.
+    const text = "The quick brown fox jumps over the lazy dog. ".repeat(7).slice(0, 300);
+    assert.equal(extractTextFromAttributedBody(attributedBody(text)), text);
+  });
+
+  it("counts length in bytes, not characters, for multibyte text", () => {
+    const text = "café 🙂 ".repeat(30);
+    assert.ok(Buffer.byteLength(text) > 127 && text.length < Buffer.byteLength(text));
+    assert.equal(extractTextFromAttributedBody(attributedBody(text)), text);
+  });
+
+  it("extracts a very long message (0x82 + 4-byte length)", () => {
+    const text = "c".repeat(70_000);
+    assert.equal(extractTextFromAttributedBody(attributedBody(text)), text);
+  });
+});
+
+describe("extractAudioTranscript", () => {
+  it("reads a transcript whose length is inline", () => {
+    assert.equal(extractAudioTranscript(userInfo.INLINE_LENGTH), "Be right there");
+  });
+
+  it("returns only the transcript, never the other user_info keys", () => {
+    const result = extractAudioTranscript(userInfo.WITH_SENSITIVE_KEYS);
+    assert.equal(result, "Running ten minutes late");
+  });
+
+  it("reads a long transcript in full", () => {
+    const result = extractAudioTranscript(userInfo.LONG_TRANSCRIPT);
+    assert.equal(result?.length, 900);
+    assert.ok(result?.startsWith("Long ascii transcript sentence."));
+  });
+
+  it("decodes UTF-16 text, including surrogate pairs", () => {
+    assert.equal(
+      extractAudioTranscript(userInfo.UNICODE),
+      "On my way, café first 🙂 back soon — really"
+    );
+  });
+
+  it("returns null when the message was not transcribed", () => {
+    assert.equal(extractAudioTranscript(userInfo.NO_TRANSCRIPT), null);
+  });
+
+  it("returns null when the top-level object is not a dict", () => {
+    assert.equal(extractAudioTranscript(userInfo.TOP_LEVEL_ARRAY), null);
+  });
+
+  it("returns null for null, empty, and non-plist input", () => {
+    assert.equal(extractAudioTranscript(null), null);
+    assert.equal(extractAudioTranscript(Buffer.alloc(0)), null);
+    assert.equal(extractAudioTranscript(Buffer.from("not a plist at all, just text")), null);
+  });
+
+  it("returns null instead of throwing on truncated or corrupted data", () => {
+    const full = userInfo.WITH_SENSITIVE_KEYS;
+    for (const cut of [8, 40, full.length - 32, full.length - 1]) {
+      assert.equal(extractAudioTranscript(full.subarray(0, cut)), null, `cut at ${cut}`);
+    }
+    const corrupted = Buffer.from(full);
+    corrupted.fill(0xff, full.length - 32);
+    assert.equal(extractAudioTranscript(corrupted), null);
   });
 });
 
@@ -93,14 +176,12 @@ describe("getMessageText", () => {
   });
 
   it("falls back to blob when text is null", () => {
-    const prefix = Buffer.from("prefix ");
-    const marker = Buffer.from("NSString");
-    const overhead = Buffer.alloc(5, 0);
-    const text = "from blob";
-    const lengthByte = Buffer.from([text.length]);
-    const textBuf = Buffer.from(text, "utf-8");
-    const blob = Buffer.concat([prefix, marker, overhead, lengthByte, textBuf]);
-
+    const blob = Buffer.concat([
+      Buffer.from("NSString"),
+      Buffer.from([0x01, 0x94, 0x84, 0x01, 0x2b]),
+      Buffer.from([9]),
+      Buffer.from("from blob", "utf-8"),
+    ]);
     assert.equal(getMessageText(null, blob), "from blob");
   });
 
@@ -152,6 +233,11 @@ describe("getChatMessages (integration)", () => {
         assert.ok("sender" in msg);
         assert.ok("service" in msg);
         assert.equal(typeof msg.is_from_me, "boolean");
+        assert.equal(typeof msg.is_audio_message, "boolean");
+      }
+      for (const m of messages) {
+        if (!m.is_audio_message) assert.equal(m.audio_transcript, null);
+        else assert.ok(m.audio_transcript === null || typeof m.audio_transcript === "string");
       }
     }
   });
